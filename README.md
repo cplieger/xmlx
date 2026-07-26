@@ -4,7 +4,7 @@
 [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/xmlx)](https://github.com/cplieger/xmlx/blob/main/go.mod)
 [![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/xmlx/badges/coverage.json)](https://github.com/cplieger/xmlx/actions/workflows/coverage.yml)
 [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/xmlx/badges/mutation.json)](https://github.com/cplieger/xmlx/issues?q=label%3Agremlins-tracker)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/PROJECT_ID/badge)](https://www.bestpractices.dev/projects/PROJECT_ID)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13796/badge)](https://www.bestpractices.dev/projects/13796)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/xmlx/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/xmlx)
 
 > Bound the work an untrusted XML document can cost, before and during an encoding/xml decode
