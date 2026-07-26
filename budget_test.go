@@ -1,0 +1,431 @@
+package xmlx_test
+
+import (
+	"encoding/xml"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/cplieger/xmlx"
+)
+
+// newBudget builds a Budget for a test, failing on a configuration mistake.
+func newBudget(t *testing.T, maxField, maxTotal int) *xmlx.Budget {
+	t.Helper()
+	b, err := xmlx.NewBudget(maxField, maxTotal)
+	if err != nil {
+		t.Fatalf("NewBudget(%d, %d): %v", maxField, maxTotal, err)
+	}
+	return b
+}
+
+// mustBudget builds a Budget outside a *testing.T (examples, fuzz bodies,
+// properties), panicking on a configuration mistake because those callers pass
+// constants.
+func mustBudget(maxField, maxTotal int) *xmlx.Budget {
+	b, err := xmlx.NewBudget(maxField, maxTotal)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// decodeFirstElementText enters the document's root element and returns what
+// b.DecodeText makes of its content, so a case states only the document and the
+// budget.
+func decodeFirstElementText(t *testing.T, doc string, b *xmlx.Budget) (string, error) {
+	t.Helper()
+	d := xml.NewDecoder(strings.NewReader(doc))
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			t.Fatalf("no start element in %q: %v", doc, err)
+		}
+		if _, ok := tok.(xml.StartElement); ok {
+			return b.DecodeText(d)
+		}
+	}
+}
+
+// TestBudgetChargeEnforcesBothCaps pins the two independent bounds: one value too
+// large, and many honest values summing past the document allowance. Without the
+// second, a document amplifies by repetition while every individual field passes.
+func TestBudgetChargeEnforcesBothCaps(t *testing.T) {
+	t.Parallel()
+
+	t.Run("per field", func(t *testing.T) {
+		t.Parallel()
+		b := newBudget(t, 8, 1000)
+		if err := b.Charge("12345678"); err != nil {
+			t.Errorf("a value exactly at the field cap = %v, want accepted", err)
+		}
+		err := b.Charge("123456789")
+		var le *xmlx.LimitError
+		if !errors.As(err, &le) || le.Kind != xmlx.KindField {
+			t.Fatalf("a value one byte over the field cap = %v, want KindField", err)
+		}
+		if le.Limit != 8 {
+			t.Errorf("Limit = %d, want the configured 8", le.Limit)
+		}
+	})
+
+	t.Run("cumulative", func(t *testing.T) {
+		t.Parallel()
+		b := newBudget(t, 8, 20)
+		for i := range 2 {
+			if err := b.Charge("12345678"); err != nil {
+				t.Fatalf("charge %d = %v, want accepted (total %d/20)", i, err, b.Total())
+			}
+		}
+		err := b.Charge("12345678")
+		var le *xmlx.LimitError
+		if !errors.As(err, &le) || le.Kind != xmlx.KindTotalText {
+			t.Errorf("the charge crossing the document cap = %v, want KindTotalText", err)
+		}
+	})
+}
+
+// TestBudgetChargeRejectsOverLargeFieldWithoutSpendingBudget pins that a rejected
+// value is not charged: a decoder that fails the whole parse does not care, but
+// one that treats an over-large field as skippable would otherwise have its
+// document allowance drained by values it never kept.
+func TestBudgetChargeRejectsOverLargeFieldWithoutSpendingBudget(t *testing.T) {
+	t.Parallel()
+	b := newBudget(t, 4, 1000)
+	if err := b.Charge(strings.Repeat("x", 500)); err == nil {
+		t.Fatal("an over-large field was accepted")
+	}
+	if b.Total() != 0 {
+		t.Errorf("Total() = %d after a rejected field, want 0", b.Total())
+	}
+	if b.Remaining() != 1000 {
+		t.Errorf("Remaining() = %d after a rejected field, want the full 1000", b.Remaining())
+	}
+}
+
+// TestBudgetTotalAndRemainingTrackCharges pins the two accessors a consumer logs
+// or asserts on, including that Remaining never reports negative once the cap is
+// crossed.
+func TestBudgetTotalAndRemainingTrackCharges(t *testing.T) {
+	t.Parallel()
+	b := newBudget(t, 10, 15)
+	if b.Total() != 0 || b.Remaining() != 15 {
+		t.Fatalf("fresh budget: Total=%d Remaining=%d, want 0 and 15", b.Total(), b.Remaining())
+	}
+	if err := b.Charge("1234567890"); err != nil {
+		t.Fatalf("charge: %v", err)
+	}
+	if b.Total() != 10 || b.Remaining() != 5 {
+		t.Errorf("after 10 bytes: Total=%d Remaining=%d, want 10 and 5", b.Total(), b.Remaining())
+	}
+	if err := b.Charge("1234567890"); err == nil {
+		t.Fatal("the charge crossing the cap was accepted")
+	}
+	// A rejection leaves the budget exactly as it was: the value was never
+	// admitted, so it must not have spent the document's allowance.
+	if b.Total() != 10 || b.Remaining() != 5 {
+		t.Errorf("after a rejected charge: Total=%d Remaining=%d, want the pre-charge 10 and 5",
+			b.Total(), b.Remaining())
+	}
+	// The allowance that IS left is still spendable.
+	if err := b.Charge("12345"); err != nil {
+		t.Errorf("charging the exact remaining 5 bytes = %v, want accepted", err)
+	}
+	if b.Remaining() != 0 {
+		t.Errorf("Remaining() = %d at the cap, want 0", b.Remaining())
+	}
+}
+
+// TestBudgetDecodeTextParityWithDecodeElement is the oracle: for any value both
+// accept, DecodeText must return byte-for-byte what DecodeElement would. The
+// point of the primitive is WHEN the cap applies, never WHAT the text is, so any
+// divergence here is a bug: it would mean adopting the budget silently changed
+// a decoded value.
+func TestBudgetDecodeTextParityWithDecodeElement(t *testing.T) {
+	t.Parallel()
+	docs := []string{
+		`<a>plain</a>`,
+		`<a></a>`,
+		`<a/>`,
+		`<a>  spaced  </a>`,
+		`<a>Frieren &amp; Co &lt;S01&gt;</a>`,
+		`<a><![CDATA[<not>markup</not>]]></a>`,
+		`<a>before<![CDATA[ mid ]]>after</a>`,
+		`<a>a&#65;b</a>`,
+		"<a>line1\nline2</a>",
+		`<a>outer<b>inner</b>tail</a>`,
+		`<a><!--comment-->text</a>`,
+		`<a><?pi data?>text</a>`,
+	}
+	for _, doc := range docs {
+		t.Run(doc, func(t *testing.T) {
+			t.Parallel()
+			got, err := decodeFirstElementText(t, doc, newBudget(t, 1024, 1<<20))
+			if err != nil {
+				t.Fatalf("DecodeText(%q) = %v", doc, err)
+			}
+
+			var want string
+			d := xml.NewDecoder(strings.NewReader(doc))
+			for {
+				tok, tokErr := d.Token()
+				if tokErr != nil {
+					t.Fatalf("no start element in %q", doc)
+				}
+				if start, ok := tok.(xml.StartElement); ok {
+					if err := d.DecodeElement(&want, &start); err != nil {
+						t.Fatalf("DecodeElement(%q) = %v", doc, err)
+					}
+					break
+				}
+			}
+			if got != want {
+				t.Errorf("DecodeText(%q) = %q, want DecodeElement parity %q", doc, got, want)
+			}
+		})
+	}
+}
+
+// TestBudgetDecodeTextRejectsAValueSplitAcrossTokens is the case that justifies
+// the primitive over DecodeElement. Each chunk is small, every one would pass a
+// lexical text-run bound, but their concatenation is not, and DecodeElement can
+// only report that after building the whole string. DecodeText stops at the token
+// that would cross the cap.
+func TestBudgetDecodeTextRejectsAValueSplitAcrossTokens(t *testing.T) {
+	t.Parallel()
+	const chunk = 16
+	const chunks = 40
+	var sb strings.Builder
+	sb.WriteString("<a>")
+	for range chunks {
+		sb.WriteString("<![CDATA[" + strings.Repeat("x", chunk) + "]]>")
+	}
+	sb.WriteString("</a>")
+	doc := sb.String()
+
+	// The budget allows any single chunk but not the concatenation.
+	b := newBudget(t, chunk*4, 1<<20)
+	_, err := decodeFirstElementText(t, doc, b)
+	var le *xmlx.LimitError
+	if !errors.As(err, &le) || le.Kind != xmlx.KindField {
+		t.Fatalf("a %d-chunk split value = %v, want KindField", chunks, err)
+	}
+
+	// DecodeElement is the contrast: it accepts the same document, which is why
+	// the caller cannot just use it and check the length afterwards.
+	var whole string
+	d := xml.NewDecoder(strings.NewReader(doc))
+	tok, tokErr := d.Token()
+	if tokErr != nil {
+		t.Fatalf("token: %v", tokErr)
+	}
+	start, ok := tok.(xml.StartElement)
+	if !ok {
+		t.Fatalf("first token %T, want a StartElement", tok)
+	}
+	if err := d.DecodeElement(&whole, &start); err != nil {
+		t.Fatalf("DecodeElement = %v; the contrast case is stale", err)
+	}
+	if len(whole) != chunk*chunks {
+		t.Errorf("DecodeElement built %d bytes, want %d; the contrast case is stale", len(whole), chunk*chunks)
+	}
+}
+
+// TestBudgetDecodeTextChargesEveryOccurrence pins that a repeated element costs
+// budget every time. Only the last occurrence survives in the caller's field, so
+// charging just that one would leave repetition unbounded, thousands of decodes
+// for one retained value.
+func TestBudgetDecodeTextChargesEveryOccurrence(t *testing.T) {
+	t.Parallel()
+	b := newBudget(t, 8, 20)
+	doc := `<r><a>12345678</a><a>12345678</a><a>12345678</a></r>`
+	d := xml.NewDecoder(strings.NewReader(doc))
+
+	var lastErr error
+	charged := 0
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			break
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok || start.Name.Local != "a" {
+			continue
+		}
+		if _, lastErr = b.DecodeText(d); lastErr != nil {
+			break
+		}
+		charged++
+	}
+	if charged != 2 {
+		t.Errorf("charged %d occurrences before the cap, want 2 (8+8 fits in 20, the third does not)", charged)
+	}
+	var le *xmlx.LimitError
+	if !errors.As(lastErr, &le) || le.Kind != xmlx.KindTotalText {
+		t.Errorf("third occurrence = %v, want KindTotalText", lastErr)
+	}
+}
+
+// TestBudgetDecodeTextSkipsNestedMarkupWhole pins that a nested element is
+// consumed, not left for the caller's loop to trip over, and that its text does
+// not leak into the value. It matches DecodeElement's behavior for a plain-text
+// destination, which is what makes the swap safe.
+func TestBudgetDecodeTextSkipsNestedMarkupWhole(t *testing.T) {
+	t.Parallel()
+	b := newBudget(t, 1024, 1<<20)
+	d := xml.NewDecoder(strings.NewReader(`<r><a>keep<b><c>drop</c></b>tail</a><next/></r>`))
+	// Enter <r>, then <a>.
+	for range 2 {
+		for {
+			tok, err := d.Token()
+			if err != nil {
+				t.Fatalf("token: %v", err)
+			}
+			if _, ok := tok.(xml.StartElement); ok {
+				break
+			}
+		}
+	}
+	got, err := b.DecodeText(d)
+	if err != nil {
+		t.Fatalf("DecodeText: %v", err)
+	}
+	if got != "keeptail" {
+		t.Errorf("DecodeText = %q, want %q (nested text dropped)", got, "keeptail")
+	}
+	// The next token must be <next/>: </a> was consumed by DecodeText.
+	for {
+		tok, tokErr := d.Token()
+		if tokErr != nil {
+			t.Fatalf("after DecodeText the decoder is not positioned at the sibling: %v", tokErr)
+		}
+		if start, ok := tok.(xml.StartElement); ok {
+			if start.Name.Local != "next" {
+				t.Errorf("next start element = %q, want next", start.Name.Local)
+			}
+			return
+		}
+	}
+}
+
+// TestNewBudgetRefusesNonPositiveCaps pins the fail-closed configuration
+// contract: a bounds type that accepted a zero cap would bound nothing, so the
+// constructor refuses rather than handing back something that silently allows
+// everything. The parameter name is in the error because a caller staring at one
+// is looking for which argument they got wrong.
+func TestNewBudgetRefusesNonPositiveCaps(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct{ field, total int }{
+		"maxFieldBytes": {field: 0, total: 10},
+		"maxTotalBytes": {field: 10, total: -1},
+	}
+	for param, tt := range tests {
+		t.Run(param, func(t *testing.T) {
+			t.Parallel()
+			b, err := xmlx.NewBudget(tt.field, tt.total)
+			if b != nil {
+				t.Error("NewBudget returned a Budget alongside an error")
+			}
+			if !errors.Is(err, xmlx.ErrInvalidLimits) {
+				t.Fatalf("NewBudget(%d, %d) = %v, want ErrInvalidLimits", tt.field, tt.total, err)
+			}
+			if errors.Is(err, xmlx.ErrLimit) {
+				t.Error("a configuration mistake reported as ErrLimit: the caller would blame the document")
+			}
+			var ce *xmlx.ConfigError
+			if !errors.As(err, &ce) || ce.Field != param {
+				t.Errorf("error = %v, want a *ConfigError naming %s", err, param)
+			}
+		})
+	}
+}
+
+// TestDefaultBudgetPairsWithDefaultLimits pins the documented relationship
+// between the two presets: the raw text bound must be LOOSER than the decoded
+// field cap, because entity escaping only ever expands text. If a future edit
+// inverted them, every entity-heavy field that decoded legally would be rejected
+// at the lexical gate instead.
+func TestDefaultBudgetPairsWithDefaultLimits(t *testing.T) {
+	t.Parallel()
+	lim := xmlx.DefaultLimits()
+	b := xmlx.DefaultBudget()
+	if lim.MaxTextRunBytes <= b.MaxFieldBytes() {
+		t.Errorf("DefaultLimits.MaxTextRunBytes (%d) <= DefaultBudget.MaxFieldBytes (%d): no entity-expansion headroom",
+			lim.MaxTextRunBytes, b.MaxFieldBytes())
+	}
+	if b.MaxTotalBytes() < b.MaxFieldBytes() {
+		t.Errorf("DefaultBudget.MaxTotalBytes (%d) < MaxFieldBytes (%d): no field could ever be charged",
+			b.MaxTotalBytes(), b.MaxFieldBytes())
+	}
+	if err := xmlx.Preflight([]byte(`<a>x</a>`), lim); err != nil {
+		t.Errorf("DefaultLimits rejects a trivial document: %v", err)
+	}
+	if err := b.Charge("x"); err != nil {
+		t.Errorf("DefaultBudget rejects a trivial field: %v", err)
+	}
+}
+
+// TestBudgetDecodeTextPropagatesDecoderErrors pins that a genuine parse failure
+// surfaces as the decoder's error, not as a bounds rejection: the two mean
+// different things to an operator, and the budget must not mask a malformed
+// document as an oversized one.
+func TestBudgetDecodeTextPropagatesDecoderErrors(t *testing.T) {
+	t.Parallel()
+	b := newBudget(t, 1024, 1<<20)
+	_, err := decodeFirstElementText(t, `<a>unterminated`, b)
+	if err == nil {
+		t.Fatal("DecodeText on a truncated element = nil error")
+	}
+	if errors.Is(err, xmlx.ErrLimit) || errors.Is(err, xmlx.ErrInvalidLimits) {
+		t.Errorf("DecodeText on a truncated element = %v, want the decoder's own error", err)
+	}
+}
+
+// TestBudgetDecodeTextBoundedByRemainingAllowance pins the interaction between the
+// two caps while a value is BUILDING. Without it the per-value cap alone governs
+// the builder, so a document with one byte of allowance left could still make the
+// caller construct a full 4 KiB string before the inevitable rejection: the
+// cumulative cap would bound what is kept and not what is built.
+func TestBudgetDecodeTextBoundedByRemainingAllowance(t *testing.T) {
+	t.Parallel()
+	// Field cap is generous; the document allowance is nearly spent.
+	b := newBudget(t, 1024, 10)
+	if err := b.Charge("123456789"); err != nil {
+		t.Fatalf("seeding the budget: %v", err)
+	}
+	if b.Remaining() != 1 {
+		t.Fatalf("Remaining() = %d after seeding, want 1", b.Remaining())
+	}
+
+	_, err := decodeFirstElementText(t, `<a>`+strings.Repeat("x", 500)+`</a>`, b)
+	var le *xmlx.LimitError
+	if !errors.As(err, &le) {
+		t.Fatalf("DecodeText = %v, want a *LimitError", err)
+	}
+	if le.Kind != xmlx.KindTotalText {
+		t.Errorf("Kind = %v, want KindTotalText (the document allowance bound, not the field cap)", le.Kind)
+	}
+	if b.Total() != 9 {
+		t.Errorf("Total() = %d after the rejection, want the pre-charge 9", b.Total())
+	}
+	// A value that fits the remaining byte is still accepted.
+	if got, err := decodeFirstElementText(t, `<a>x</a>`, b); err != nil || got != "x" {
+		t.Errorf("DecodeText of the last affordable byte = %q, %v; want \"x\", nil", got, err)
+	}
+}
+
+// TestBudgetDecodeTextPropagatesSkipErrors pins that a failure inside a nested
+// element the value skips surfaces as the decoder's error, not as a bounds
+// rejection. The nested subtree is not part of the value, so a caller must not
+// read its malformation as an oversized field.
+func TestBudgetDecodeTextPropagatesSkipErrors(t *testing.T) {
+	t.Parallel()
+	b := newBudget(t, 1024, 1<<20)
+	_, err := decodeFirstElementText(t, `<a>text<b><c></b></a>`, b)
+	if err == nil {
+		t.Fatal("DecodeText over a malformed nested element = nil error")
+	}
+	if errors.Is(err, xmlx.ErrLimit) || errors.Is(err, xmlx.ErrInvalidLimits) {
+		t.Errorf("DecodeText = %v, want the decoder's own error", err)
+	}
+}
