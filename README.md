@@ -41,7 +41,7 @@ if err := xml.Unmarshal(body, &doc); err != nil {
 }
 ```
 
-`Budget` is the decode-time accounting a schema decoder charges each retained value against, applied before the value is stored:
+`Budget` is the decode-time accounting a schema decoder charges each retained value against, applied before the value is stored. Thread one `Budget` through the document's decoders, here as the `item`'s `budget` field:
 
 ```go
 budget, err := xmlx.NewBudget(4<<10, 4<<20) // per value, per document
@@ -104,7 +104,7 @@ if err := xmlx.Preflight(body, lim); err != nil {
 - `NewBudget(maxFieldBytes, maxTotalBytes int) (*Budget, error)` + `DefaultBudget()`: decode-time text accounting for one document, with `Total()`, `Remaining()`, `MaxFieldBytes()`, `MaxTotalBytes()`.
 - `Budget.DecodeText(d *xml.Decoder) (string, error)`: replaces `d.DecodeElement(&s, &start)` for a text field. Accumulates under the per-value cap and the document's remaining allowance, stopping at the token that would cross either. Nested markup is skipped whole; comments and processing instructions are ignored; on success the end tag is consumed. Any error means the document is over. The swap is byte-identical to `DecodeElement` for every value inside `encoding/xml`'s acceptance set, with one measured exception at the decoder's own depth ceiling (below).
 - `Budget.Charge(s string) error`: account one already-decoded value against both caps before storing it. Charge each value exactly once; a value returned by `DecodeText` is already charged.
-- `LimitError` + `Kind` + `ErrLimit`: every rejection names its bound and, for `Preflight`, the byte offset. Match the class with `errors.Is(err, xmlx.ErrLimit)`; read `*LimitError` for the `Kind`, `Limit` and `Offset`.
+- `LimitError` + `Kind` + `ErrLimit`: every rejection names its bound and, for `Preflight`, the byte offset. Match the class with `errors.Is(err, xmlx.ErrLimit)`; read the bound with `errors.AsType[*xmlx.LimitError](err)` for the `Kind`, `Limit` and `Offset`.
 - `ConfigError` + `ErrInvalidLimits`: a non-positive bound is a caller mistake, reported separately from a document rejection.
 
 ## Design notes
@@ -133,7 +133,7 @@ A catalogue-scale consumer, such as one parsing a multi-megabyte metadata dump, 
 - **Schema validation, namespace policy, character-encoding conversion, well-formedness.** All `encoding/xml`'s. `Preflight` reads surface structure only, enough to know where one token ends and the next begins. The converse does not hold: malformed input can still trip a bound, so a rejection means the document was outside the contract, not that it was oversized.
 - **Streaming.** `Preflight` takes the whole body, because the gate's value is refusing a document before decoding it, and the caller already holds the bytes from a byte-capped read.
 - **Per-name cardinality.** "At most N `<item>` elements" needs your vocabulary and reads better with a name from it. `MaxElements` covers the vocabulary-free total.
-- **Recursion depth inside `DecodeText`.** `Budget.DecodeText` is iterative (`Token` plus `Skip`), so unlike `DecodeElement` it does not enter `encoding/xml`'s unmarshal recursion and does not inherit that recursion's depth ceiling. Measured on go1.27.0 by entering an element at a known open depth: the two return the same value up to 9999 open elements, and from 10000 (5000 on wasm) `DecodeElement` refuses while `DecodeText` still returns the value. `DecodeText` is therefore the looser of the two above that depth. That is the intended split rather than a gap. A `Budget` bounds bytes retained and never document shape, `DecodeText` carries no recursion for a ceiling to protect, and nesting is `Preflight`'s bound. A caller that wants the ceiling enforced sets `MaxDepth` at or below it, which also turns an unclassifiable stdlib error into `KindDepth` wrapping `ErrLimit`.
+- **Recursion depth inside `DecodeText`.** `Budget.DecodeText` is iterative (`Token` plus `Skip`), so unlike `DecodeElement` it does not enter `encoding/xml`'s unmarshal recursion and does not inherit that recursion's depth ceiling. Measured on go1.27.0 by entering an element at a known open depth: the two return the same value through 10000 open elements (5000 on wasm), and one element deeper `DecodeElement` refuses while `DecodeText` still returns the value. `DecodeText` is therefore the looser of the two above that depth. That is the intended split rather than a gap. A `Budget` bounds bytes retained and never document shape, `DecodeText` carries no recursion for a ceiling to protect, and nesting is `Preflight`'s bound. A caller that wants the ceiling enforced sets `MaxDepth` at or below it, which also turns an unclassifiable stdlib error into `KindDepth` wrapping `ErrLimit`.
 - **Non-default decoder configuration.** The bounds model `Strict` enabled, no `AutoClose`, no caller-supplied `Entity` map, no `CharsetReader`. With `Strict` disabled a bare attribute name becomes an attribute the lexical count cannot see; an `Entity` map can expand a short reference after the raw bound has passed. Either keeps the token, depth and element bounds and makes the attribute and text bounds advisory.
 
 ## Contributing
