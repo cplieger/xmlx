@@ -13,12 +13,16 @@
 //     megabytes of wire and expand into a decoded object graph many times
 //     larger.
 //   - Nesting grows the decoder's element stack. The tokenizer pushes one
-//     heap-allocated entry per open element. Unmarshal does cap its own
-//     recursion at a fixed internal ceiling (the fix for CVE-2022-30633), but
-//     every child the caller's schema does not model is consumed by
-//     Decoder.Skip, which is iterative and has no depth bound at all, so the
-//     element stack still grows to the document's true depth. A body of
-//     `<a><a><a>...` converts each 3 bytes of wire into a live stack entry.
+//     heap-allocated entry per open element. Unmarshal does carry a fixed
+//     internal ceiling on its own recursion (10000 open elements, 5000 on wasm;
+//     the guard was introduced for CVE-2022-30633 and rebuilt for
+//     CVE-2026-56859, which closed a DecodeElement bypass), but the decoder
+//     samples it only where its schema recursion goes, and every child the
+//     caller's schema does not model is consumed by Decoder.Skip, which is
+//     iterative and has no depth bound at all. Measured on go1.27.0: a document
+//     349,525 elements deep decodes clean under a schema that models only the
+//     root. A body of `<a><a><a>...` converts each 3 bytes of wire into a live
+//     stack entry.
 //   - Concurrency multiplies all three. Each in-flight request holds its own
 //     copy of the worst case.
 //

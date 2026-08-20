@@ -56,7 +56,31 @@ type Limits struct {
 	// pushes `<e/>` and pops it on the synthesized end tag, so `<a><b/></a>`
 	// reaches depth 2, not 1. The decoder additionally pushes one entry per
 	// namespace declaration it meets, so the stack LENGTH is bounded by
-	// MaxDepth * (1 + MaxTagAttrs) rather than by MaxDepth alone.
+	// MaxDepth * (1 + MaxTagAttrs) rather than by MaxDepth alone. Those
+	// namespace entries do NOT feed the decoder's own depth guard below, which
+	// counts start elements only.
+	//
+	// # The decoder's own ceiling, and where it overlaps this bound
+	//
+	// encoding/xml carries a fixed internal ceiling of its own on the same
+	// quantity: 10000 open elements, and 5000 when GOARCH is wasm. It is not an
+	// alternative to this bound, because the decoder SAMPLES it only on each
+	// entry into its unmarshal recursion rather than tracking the document's
+	// peak. Measured on go1.27.0: a document 349,525 elements deep under a
+	// schema that models only the root is accepted, and Decoder.Skip walks it
+	// unbounded, so a caller relying on the decoder's ceiling has no depth
+	// bound at all for the part its schema ignores. That is the case this
+	// bound exists for.
+	//
+	// Where the two do overlap is a schema whose own nesting follows the
+	// document's, which is what makes the region of MaxDepth above the
+	// decoder's ceiling unreachable for such a schema: measured at MaxDepth
+	// 10001, a 10001-deep document passes Preflight and is then refused by
+	// xml.Unmarshal with an unexported, unwrapped errors.New("exceeded max
+	// depth") that no errors.Is can classify. So keep MaxDepth at or below
+	// 10000 (5000 for a wasm build) whenever the schema is nested as deeply as
+	// the document, and this package reports the rejection instead, as
+	// KindDepth wrapping ErrLimit.
 	MaxDepth int
 	// MaxElements caps the total number of elements in the document.
 	//
