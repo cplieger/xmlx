@@ -95,8 +95,8 @@ func (k Kind) what() string {
 // String implements fmt.Stringer with the same noun the error message uses.
 func (k Kind) String() string { return k.what() }
 
-// LimitError reports which bound a document exceeded. Match it with errors.As;
-// match the class with errors.Is against ErrLimit.
+// LimitError reports which bound a document exceeded. Match it with
+// errors.AsType; match the class with errors.Is against ErrLimit.
 //
 // It carries no excerpt of the document. That is deliberate: the offending bytes
 // are untrusted input, and an error built from them would be an unbounded,
@@ -154,8 +154,7 @@ func limitErr(kind Kind, limit int) error {
 // at stamps a rejection with the byte offset where it was detected. It is a
 // no-op for any other error, so a decoder error passes through untouched.
 func at(err error, offset int) error {
-	var le *LimitError
-	if errors.As(err, &le) {
+	if le, ok := errors.AsType[*LimitError](err); ok {
 		le.Offset = offset
 	}
 	return err

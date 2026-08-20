@@ -77,8 +77,7 @@ func TestPropPreflightRejectsOnlyDirectivesWhenUnbounded(t *testing.T) {
 		if err == nil {
 			return
 		}
-		var le *xmlx.LimitError
-		if !errors.As(err, &le) || le.Kind != xmlx.KindDirective {
+		if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindDirective {
 			rt.Fatalf("under unbounded limits body %q = %v, want at most a KindDirective", body, err)
 		}
 	})
@@ -132,8 +131,7 @@ func TestPropPreflightDepthMatchesTheDecoder(t *testing.T) {
 				depth, maxDepth, rejected, err, want, doc)
 		}
 		if rejected {
-			var le *xmlx.LimitError
-			if !errors.As(err, &le) || le.Kind != xmlx.KindDepth {
+			if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindDepth {
 				rt.Fatalf("depth rejection = %v, want KindDepth", err)
 			}
 		}
@@ -208,8 +206,8 @@ func TestPropBudgetChargeNeverExceedsItsCaps(t *testing.T) {
 				accepted += n
 				continue
 			}
-			var le *xmlx.LimitError
-			if !errors.As(err, &le) {
+			le, ok := errors.AsType[*xmlx.LimitError](err)
+			if !ok {
 				rt.Fatalf("Charge(%d bytes) = %v, want a *LimitError", n, err)
 			}
 			switch le.Kind {

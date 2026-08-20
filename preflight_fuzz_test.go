@@ -71,8 +71,8 @@ func FuzzPreflight(f *testing.F) {
 			t.Fatalf("nondeterministic on %q: %v then %v", body, err, again)
 		}
 		if err != nil {
-			var le *xmlx.LimitError
-			if !errors.As(err, &le) {
+			le, ok := errors.AsType[*xmlx.LimitError](err)
+			if !ok {
 				t.Fatalf("Preflight(%q) = %v, want a *LimitError", body, err)
 			}
 			if !errors.Is(err, xmlx.ErrLimit) {
@@ -96,8 +96,7 @@ func FuzzPreflight(f *testing.F) {
 
 		unbounded := xmlx.Preflight(body, hugeLimits())
 		if unbounded != nil {
-			var le *xmlx.LimitError
-			if !errors.As(unbounded, &le) || le.Kind != xmlx.KindDirective {
+			if le, ok := errors.AsType[*xmlx.LimitError](unbounded); !ok || le.Kind != xmlx.KindDirective {
 				t.Fatalf("under unbounded limits %q = %v, want at most a KindDirective", body, unbounded)
 			}
 		}
