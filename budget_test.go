@@ -60,8 +60,8 @@ func TestBudgetChargeEnforcesBothCaps(t *testing.T) {
 			t.Errorf("a value exactly at the field cap = %v, want accepted", err)
 		}
 		err := b.Charge("123456789")
-		var le *xmlx.LimitError
-		if !errors.As(err, &le) || le.Kind != xmlx.KindField {
+		le, ok := errors.AsType[*xmlx.LimitError](err)
+		if !ok || le.Kind != xmlx.KindField {
 			t.Fatalf("a value one byte over the field cap = %v, want KindField", err)
 		}
 		if le.Limit != 8 {
@@ -78,8 +78,7 @@ func TestBudgetChargeEnforcesBothCaps(t *testing.T) {
 			}
 		}
 		err := b.Charge("12345678")
-		var le *xmlx.LimitError
-		if !errors.As(err, &le) || le.Kind != xmlx.KindTotalText {
+		if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindTotalText {
 			t.Errorf("the charge crossing the document cap = %v, want KindTotalText", err)
 		}
 	})
@@ -206,8 +205,7 @@ func TestBudgetDecodeTextRejectsAValueSplitAcrossTokens(t *testing.T) {
 	// The budget allows any single chunk but not the concatenation.
 	b := newBudget(t, chunk*4, 1<<20)
 	_, err := decodeFirstElementText(t, doc, b)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) || le.Kind != xmlx.KindField {
+	if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindField {
 		t.Fatalf("a %d-chunk split value = %v, want KindField", chunks, err)
 	}
 
@@ -260,8 +258,7 @@ func TestBudgetDecodeTextChargesEveryOccurrence(t *testing.T) {
 	if charged != 2 {
 		t.Errorf("charged %d occurrences before the cap, want 2 (8+8 fits in 20, the third does not)", charged)
 	}
-	var le *xmlx.LimitError
-	if !errors.As(lastErr, &le) || le.Kind != xmlx.KindTotalText {
+	if le, ok := errors.AsType[*xmlx.LimitError](lastErr); !ok || le.Kind != xmlx.KindTotalText {
 		t.Errorf("third occurrence = %v, want KindTotalText", lastErr)
 	}
 }
@@ -332,8 +329,7 @@ func TestNewBudgetRefusesNonPositiveCaps(t *testing.T) {
 			if errors.Is(err, xmlx.ErrLimit) {
 				t.Error("a configuration mistake reported as ErrLimit: the caller would blame the document")
 			}
-			var ce *xmlx.ConfigError
-			if !errors.As(err, &ce) || ce.Field != param {
+			if ce, ok := errors.AsType[*xmlx.ConfigError](err); !ok || ce.Field != param {
 				t.Errorf("error = %v, want a *ConfigError naming %s", err, param)
 			}
 		})
@@ -398,8 +394,8 @@ func TestBudgetDecodeTextBoundedByRemainingAllowance(t *testing.T) {
 	}
 
 	_, err := decodeFirstElementText(t, `<a>`+strings.Repeat("x", 500)+`</a>`, b)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) {
+	le, ok := errors.AsType[*xmlx.LimitError](err)
+	if !ok {
 		t.Fatalf("DecodeText = %v, want a *LimitError", err)
 	}
 	if le.Kind != xmlx.KindTotalText {

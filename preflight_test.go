@@ -128,8 +128,8 @@ func TestPreflightRejectsEachBound(t *testing.T) {
 			if !errors.Is(err, xmlx.ErrLimit) {
 				t.Fatalf("Preflight = %v, want an ErrLimit", err)
 			}
-			var le *xmlx.LimitError
-			if !errors.As(err, &le) {
+			le, ok := errors.AsType[*xmlx.LimitError](err)
+			if !ok {
 				t.Fatalf("Preflight = %v, want a *LimitError", err)
 			}
 			if le.Kind != tt.want {
@@ -243,8 +243,7 @@ func TestPreflightQuotedAngleBracketDoesNotTerminateTag(t *testing.T) {
 	// Four attributes, the first holding a '>'. Only a scan that kept reading
 	// past the quoted '>' counts them all and rejects.
 	err := xmlx.Preflight([]byte(`<a p="1 > 0" q="2" r="3" s="4"/>`), lim)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) || le.Kind != xmlx.KindTagAttrs {
+	if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindTagAttrs {
 		t.Errorf("four attributes after a quoted '>' = %v, want KindTagAttrs", err)
 	}
 }
@@ -279,8 +278,7 @@ func TestPreflightStrayEndTagsClampDepth(t *testing.T) {
 	lim := xmlx.Limits{MaxTextRunBytes: 1 << 20, MaxTokenBytes: 1 << 20, MaxTagAttrs: 8, MaxDepth: 3, MaxElements: 1 << 20}
 	doc := strings.Repeat("</a>", 100) + strings.Repeat("<a>", 4)
 	err := xmlx.Preflight([]byte(doc), lim)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) || le.Kind != xmlx.KindDepth {
+	if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindDepth {
 		t.Errorf("100 stray end tags then 4 start tags = %v, want KindDepth", err)
 	}
 }
@@ -352,8 +350,7 @@ func TestPreflightRefusesNonPositiveLimits(t *testing.T) {
 			if errors.Is(err, xmlx.ErrLimit) {
 				t.Error("a configuration mistake reported as ErrLimit: the caller would blame the document")
 			}
-			var ce *xmlx.ConfigError
-			if !errors.As(err, &ce) || ce.Field != field {
+			if ce, ok := errors.AsType[*xmlx.ConfigError](err); !ok || ce.Field != field {
 				t.Errorf("error = %v, want a *ConfigError naming %s", err, field)
 			}
 		})
@@ -386,8 +383,7 @@ func TestPreflightUnderHugeLimitsOnlyRejectsDirectives(t *testing.T) {
 		}
 	}
 	err := xmlx.Preflight([]byte(`<!DOCTYPE a><a/>`), hugeLimits())
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) || le.Kind != xmlx.KindDirective {
+	if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindDirective {
 		t.Errorf("directive under huge limits = %v, want KindDirective", err)
 	}
 }
@@ -440,8 +436,7 @@ func TestPreflightSelfClosingElementOccupiesOneLevel(t *testing.T) {
 	}
 	// <a><b><c/></b></a> peaks at 3, one over.
 	err := xmlx.Preflight([]byte(`<a><b><c/></b></a>`), lim)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) || le.Kind != xmlx.KindDepth {
+	if le, ok := errors.AsType[*xmlx.LimitError](err); !ok || le.Kind != xmlx.KindDepth {
 		t.Errorf("depth-3 document whose deepest element is self-closing = %v, want KindDepth", err)
 	}
 	// The decoder agrees the peak is 3, which is what makes the bound honest.
@@ -522,8 +517,8 @@ func TestPreflightBoundsElementCount(t *testing.T) {
 		t.Errorf("10 elements at MaxElements=10 = %v, want accepted", err)
 	}
 	err := xmlx.Preflight([]byte(strings.Repeat("<a/>", 11)), lim)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) || le.Kind != xmlx.KindElements {
+	le, ok := errors.AsType[*xmlx.LimitError](err)
+	if !ok || le.Kind != xmlx.KindElements {
 		t.Fatalf("11 elements at MaxElements=10 = %v, want KindElements", err)
 	}
 	if le.Limit != 10 {
@@ -535,8 +530,9 @@ func TestPreflightBoundsElementCount(t *testing.T) {
 		t.Errorf("10 paired elements at MaxElements=10 = %v, want accepted", err)
 	}
 	// The bound is a document total, not per level: nesting does not exempt it.
-	if err := xmlx.Preflight([]byte(strings.Repeat("<a>", 11)), lim); !errors.As(err, &le) || le.Kind != xmlx.KindElements {
-		t.Errorf("11 nested elements at MaxElements=10 = %v, want KindElements", err)
+	nestedErr := xmlx.Preflight([]byte(strings.Repeat("<a>", 11)), lim)
+	if nested, ok := errors.AsType[*xmlx.LimitError](nestedErr); !ok || nested.Kind != xmlx.KindElements {
+		t.Errorf("11 nested elements at MaxElements=10 = %v, want KindElements", nestedErr)
 	}
 	// Comments, processing instructions and CDATA are not elements.
 	noise := `<?xml version="1.0"?><!--c--><a><![CDATA[x]]></a>`
@@ -557,8 +553,8 @@ func TestPreflightRejectionCarriesTheOffset(t *testing.T) {
 
 	// The over-long run starts after "<pad/><a>" = 9 bytes.
 	err := xmlx.Preflight([]byte(`<pad/><a>`+strings.Repeat("x", 100)+`</a>`), lim)
-	var le *xmlx.LimitError
-	if !errors.As(err, &le) {
+	le, ok := errors.AsType[*xmlx.LimitError](err)
+	if !ok {
 		t.Fatalf("Preflight = %v, want a *LimitError", err)
 	}
 	if le.Offset != 9 {

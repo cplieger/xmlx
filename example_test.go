@@ -31,8 +31,7 @@ func ExamplePreflight_limitError() {
 
 	err := xmlx.Preflight(body, xmlx.DefaultLimits())
 
-	var le *xmlx.LimitError
-	if errors.As(err, &le) {
+	if le, ok := errors.AsType[*xmlx.LimitError](err); ok {
 		fmt.Println(le.Kind, "limit:", le.Limit)
 	}
 	fmt.Println("is a limit error:", errors.Is(err, xmlx.ErrLimit))
