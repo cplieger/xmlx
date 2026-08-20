@@ -134,9 +134,32 @@ func (b *Budget) charge(n int) error {
 // remaining allowance, stopping at the token that would cross either, so the
 // string it builds never exceeds what the caller would accept.
 //
-// Nested markup is skipped whole, matching DecodeElement's behavior for a
-// plain-text destination; comments and processing instructions are ignored, as
-// DecodeElement ignores them.
+// Nested markup is skipped whole; comments and processing instructions are
+// ignored, as DecodeElement ignores them.
+//
+// # Where the two stop agreeing, measured
+//
+// The swap is byte-identical to DecodeElement for every value inside
+// encoding/xml's own acceptance set, and the fuzz oracle pins that. It is NOT
+// identical outside it, in ONE respect, and the difference is a real acceptance-set
+// divergence rather than a wording caveat.
+//
+// encoding/xml guards its unmarshal recursion by sampling the decoder's live
+// open-element count on each entry into that recursion, against a fixed internal
+// ceiling: 10000, and 5000 when GOARCH is wasm. DecodeElement enters that
+// recursion, so it inherits the ceiling. Measured on go1.27.0 by entering an
+// element at a known open depth: the two agree to open depth 9999, and from open
+// depth 10000 DecodeElement refuses with an unexported, unwrapped
+// errors.New("exceeded max depth") while DecodeText returns the value. So
+// DecodeText is the LOOSER of the two above that depth.
+//
+// That is deliberate rather than an omission. DecodeText is iterative (Token plus
+// Skip), so it carries none of the recursion the ceiling exists to bound, and
+// nesting is [Preflight]'s bound in this package's split, not a Budget's: a
+// Budget bounds bytes retained, never document shape. A caller that wants the
+// decoder's ceiling enforced sets [Limits.MaxDepth] at or below it and runs
+// Preflight, which rejects first and reports [KindDepth] wrapping [ErrLimit] --
+// a classifiable error, which the stdlib's is not.
 //
 // On success the element's end tag is consumed, so the caller's token loop
 // continues at the next sibling. On ANY error the document is over, and the

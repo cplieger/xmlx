@@ -185,6 +185,135 @@ func TestBudgetDecodeTextParityWithDecodeElement(t *testing.T) {
 	}
 }
 
+// TestBudgetDecodeTextIsLooserThanDecodeElementAtTheDecoderCeiling is the
+// boundary complement of TestBudgetDecodeTextParityWithDecodeElement: the ONE
+// place the documented swap is not byte-identical.
+//
+// encoding/xml guards its unmarshal recursion by sampling the decoder's live
+// open-element count on each entry, against a fixed internal ceiling (10000, and
+// 5000 when GOARCH is wasm; introduced for CVE-2022-30633, rebuilt for
+// CVE-2026-56859). DecodeElement enters that recursion and inherits the ceiling.
+// DecodeText is iterative (Token plus Skip), so it does not, which makes it the
+// looser of the two above that depth.
+//
+// The ceiling is unexported, so this test MEASURES it rather than asserting a
+// number, and it therefore holds on wasm too. What it pins is the RELATIONSHIP:
+// they agree at the last accepted depth, and one level deeper DecodeElement
+// refuses while DecodeText still returns the value. If a later Go release moves
+// or removes the ceiling, this fails and the package doc needs revisiting.
+func TestBudgetDecodeTextIsLooserThanDecodeElementAtTheDecoderCeiling(t *testing.T) {
+	t.Parallel()
+
+	last := lastDepthDecodeElementAccepts(t)
+	if last < 4000 {
+		t.Fatalf("measured ceiling at %d open elements, implausibly low; the probe is wrong", last)
+	}
+
+	// At the last accepted depth the two agree, value included.
+	textAt, errAt := decodeTextAtDepth(t, last)
+	elemAt, elemErrAt := decodeElementAtDepth(t, last)
+	if errAt != nil || elemErrAt != nil {
+		t.Fatalf("at %d open elements: DecodeText = %v, DecodeElement = %v; want both accepted",
+			last, errAt, elemErrAt)
+	}
+	if textAt != elemAt {
+		t.Errorf("at %d open elements: DecodeText = %q, want DecodeElement parity %q", last, textAt, elemAt)
+	}
+
+	// One level deeper the decoder refuses and DecodeText does not.
+	textOver, errOver := decodeTextAtDepth(t, last+1)
+	_, elemErrOver := decodeElementAtDepth(t, last+1)
+	if elemErrOver == nil {
+		t.Fatalf("at %d open elements DecodeElement accepted; the measured ceiling %d is wrong", last+1, last)
+	}
+	if errOver != nil {
+		t.Errorf("at %d open elements DecodeText = %v, want the value (it carries no recursion to bound)",
+			last+1, errOver)
+	}
+	if textOver != elemAt {
+		t.Errorf("at %d open elements DecodeText = %q, want the same value %q it returns below the ceiling",
+			last+1, textOver, elemAt)
+	}
+
+	// The stdlib rejection is unclassifiable, which is why Preflight's KindDepth
+	// is the bound a caller should rely on.
+	if _, ok := errors.AsType[*xmlx.LimitError](elemErrOver); ok {
+		t.Errorf("DecodeElement rejection = %v, unexpectedly a *xmlx.LimitError", elemErrOver)
+	}
+	if errors.Unwrap(elemErrOver) != nil {
+		t.Errorf("DecodeElement rejection %v unwraps to %v, want an unwrapped error",
+			elemErrOver, errors.Unwrap(elemErrOver))
+	}
+}
+
+// lastDepthDecodeElementAccepts binary-searches the greatest open-element count
+// at which DecodeElement still reads a value, which is encoding/xml's unexported
+// ceiling. Measuring it keeps this suite honest on any GOARCH.
+func lastDepthDecodeElementAccepts(t *testing.T) int {
+	t.Helper()
+	lo, hi := 1, 20001 // lo accepts, hi must not
+	if _, err := decodeElementAtDepth(t, hi); err == nil {
+		t.Fatalf("DecodeElement accepted %d open elements; encoding/xml has no reachable ceiling", hi)
+	}
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		if _, err := decodeElementAtDepth(t, mid); err == nil {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return lo
+}
+
+// deepTextDoc wraps a one-character text element in wrappers-1 further elements,
+// so entering the innermost element leaves the decoder holding exactly `wrappers`
+// open elements.
+func deepTextDoc(wrappers int) string {
+	var sb strings.Builder
+	sb.WriteString(strings.Repeat("<a>", wrappers-1))
+	sb.WriteString("<v>t</v>")
+	sb.WriteString(strings.Repeat("</a>", wrappers-1))
+	return sb.String()
+}
+
+// enterDeepestElement advances a decoder over deepTextDoc(wrappers) to the
+// innermost start element and returns it, so the decoder holds `wrappers` open
+// elements when the caller reads the value.
+func enterDeepestElement(t *testing.T, wrappers int) (*xml.Decoder, xml.StartElement) {
+	t.Helper()
+	d := xml.NewDecoder(strings.NewReader(deepTextDoc(wrappers)))
+	for seen := 0; ; {
+		tok, err := d.Token()
+		if err != nil {
+			t.Fatalf("walking to depth %d: %v", wrappers, err)
+		}
+		if start, ok := tok.(xml.StartElement); ok {
+			seen++
+			if seen == wrappers {
+				return d, start
+			}
+		}
+	}
+}
+
+// decodeTextAtDepth reads the innermost value with Budget.DecodeText.
+func decodeTextAtDepth(t *testing.T, wrappers int) (string, error) {
+	t.Helper()
+	d, _ := enterDeepestElement(t, wrappers)
+	return newBudget(t, 1024, 1<<20).DecodeText(d)
+}
+
+// decodeElementAtDepth reads the innermost value with encoding/xml's own
+// DecodeElement, the primitive DecodeText documents itself against.
+func decodeElementAtDepth(t *testing.T, wrappers int) (string, error) {
+	t.Helper()
+	d, start := enterDeepestElement(t, wrappers)
+	var s string
+	err := d.DecodeElement(&s, &start)
+	return s, err
+}
+
 // TestBudgetDecodeTextRejectsAValueSplitAcrossTokens is the case that justifies
 // the primitive over DecodeElement. Each chunk is small, every one would pass a
 // lexical text-run bound, but their concatenation is not, and DecodeElement can
@@ -266,7 +395,9 @@ func TestBudgetDecodeTextChargesEveryOccurrence(t *testing.T) {
 // TestBudgetDecodeTextSkipsNestedMarkupWhole pins that a nested element is
 // consumed, not left for the caller's loop to trip over, and that its text does
 // not leak into the value. It matches DecodeElement's behavior for a plain-text
-// destination, which is what makes the swap safe.
+// destination inside encoding/xml's acceptance set, which is what makes the swap
+// safe. The one place the two stop agreeing is the decoder's own depth ceiling,
+// pinned by TestBudgetDecodeTextIsLooserThanDecodeElementAtTheDecoderCeiling.
 func TestBudgetDecodeTextSkipsNestedMarkupWhole(t *testing.T) {
 	t.Parallel()
 	b := newBudget(t, 1024, 1<<20)
