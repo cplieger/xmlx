@@ -609,3 +609,145 @@ func TestPreflightDecoderConfigurationIsDocumentedNotEnforced(t *testing.T) {
 		t.Errorf("non-strict decode produced %d attributes, want 3; the documented limitation is stale", len(start.Attr))
 	}
 }
+
+// TestPreflightAcceptsTheSmallestTokenOfEachDelimitedClass pins the token bound
+// at its floor. A close-delimited class has a minimum lexical span its
+// delimiters alone occupy, and a bound sized to exactly that span must still
+// admit the empty token: a caller who set MaxTokenBytes to fit one comment
+// delimiter pair means to allow an empty comment, not to forbid the class. One
+// byte below that span nothing of the class can fit, and the rejection names the
+// class so the caller can see which bound is too small.
+func TestPreflightAcceptsTheSmallestTokenOfEachDelimitedClass(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		smallest string
+		want     xmlx.Kind
+	}{
+		{name: "comment", smallest: `<!---->`, want: xmlx.KindComment},
+		{name: "processing instruction", smallest: `<??>`, want: xmlx.KindProcInst},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			exact := xmlx.Limits{
+				MaxTextRunBytes: 32,
+				MaxTokenBytes:   len(tt.smallest),
+				MaxTagAttrs:     2,
+				MaxDepth:        4,
+				MaxElements:     8,
+			}
+			if err := xmlx.Preflight([]byte(tt.smallest), exact); err != nil {
+				t.Errorf("Preflight(%q) at MaxTokenBytes=%d = %v, want accepted", tt.smallest, exact.MaxTokenBytes, err)
+			}
+
+			tight := exact
+			tight.MaxTokenBytes = len(tt.smallest) - 1
+			err := xmlx.Preflight([]byte(tt.smallest), tight)
+			le, ok := errors.AsType[*xmlx.LimitError](err)
+			if !ok || le.Kind != tt.want {
+				t.Fatalf("Preflight(%q) at MaxTokenBytes=%d = %v, want %v", tt.smallest, tight.MaxTokenBytes, err, tt.want)
+			}
+			if le.Limit != tight.MaxTokenBytes {
+				t.Errorf("Limit = %d, want the configured %d", le.Limit, tight.MaxTokenBytes)
+			}
+		})
+	}
+}
+
+// TestPreflightEmptyDelimitedTokenDoesNotEndTheScan pins the span of a
+// close-delimited token whose content is empty: it is exactly its delimiters, so
+// the bytes after it are still document. A token whose span was misreported as
+// the whole remainder would make `<![CDATA[]]>` a universal bypass, since every
+// bound after it would go unenforced while the document still passed.
+func TestPreflightEmptyDelimitedTokenDoesNotEndTheScan(t *testing.T) {
+	t.Parallel()
+	empties := map[string]string{
+		"comment":                `<!---->`,
+		"processing instruction": `<??>`,
+		"cdata":                  `<![CDATA[]]>`,
+	}
+	for name, empty := range empties {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			doc := `<r>` + empty + `<a/></r>`
+			lim := xmlx.Limits{MaxTextRunBytes: 32, MaxTokenBytes: 64, MaxTagAttrs: 2, MaxDepth: 4, MaxElements: 2}
+			if err := xmlx.Preflight([]byte(doc), lim); err != nil {
+				t.Errorf("Preflight(%q) at MaxElements=2 = %v, want accepted", doc, err)
+			}
+
+			// The element after the empty token is the second one, so a bound of
+			// one must reject it.
+			tight := lim
+			tight.MaxElements = 1
+			err := xmlx.Preflight([]byte(doc), tight)
+			le, ok := errors.AsType[*xmlx.LimitError](err)
+			if !ok || le.Kind != xmlx.KindElements {
+				t.Fatalf("Preflight(%q) at MaxElements=1 = %v, want KindElements: the element after the empty token still counts", doc, err)
+			}
+		})
+	}
+}
+
+// TestPreflightMarkupInsideCDATAIsNotMarkup pins that a CDATA section's content
+// is character data whatever it spells. Tags written inside it are literal bytes
+// and reach neither the element count nor the depth accounting; a section whose
+// span was measured short would resume the scan inside its own content and read
+// those bytes as document structure, rejecting a legitimate document over
+// elements it invented.
+func TestPreflightMarkupInsideCDATAIsNotMarkup(t *testing.T) {
+	t.Parallel()
+	// The document holds exactly one element, its root, so any element the scan
+	// finds inside the section is a rejection.
+	lim := xmlx.Limits{MaxTextRunBytes: 64, MaxTokenBytes: 64, MaxTagAttrs: 2, MaxDepth: 4, MaxElements: 1}
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "start tag", content: `<a>`},
+		{name: "nested start tags", content: `<a><b><c>`},
+		{name: "paired tags", content: `<not>markup</not>`},
+		{name: "end tag", content: `</x>`},
+		{name: "self closing tag", content: `<a/>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			doc := `<r><![CDATA[` + tt.content + `]]></r>`
+			if err := xmlx.Preflight([]byte(doc), lim); err != nil {
+				t.Errorf("Preflight(%q) at MaxElements=1 = %v, want accepted: only <r> is an element", doc, err)
+			}
+		})
+	}
+}
+
+// TestPreflightUnterminatedTagAtTheTokenBoundIsLeftToTheDecoder pins the tail
+// case of the token bound. A tag that never closes is a well-formedness fault,
+// not an oversized token, so long as the bytes it occupies stay within the bound:
+// reporting a limit error for a truncated document would blame its size and hide
+// the parse error that says what is actually wrong with it. One byte past the
+// bound the size claim becomes true and the rejection is correct.
+func TestPreflightUnterminatedTagAtTheTokenBoundIsLeftToTheDecoder(t *testing.T) {
+	t.Parallel()
+	const bound = 8
+	lim := xmlx.Limits{MaxTextRunBytes: 32, MaxTokenBytes: bound, MaxTagAttrs: 2, MaxDepth: 4, MaxElements: 8}
+
+	atBound := "<" + strings.Repeat("a", bound-1)
+	if err := xmlx.Preflight([]byte(atBound), lim); err != nil {
+		t.Errorf("Preflight(%q), %d bytes at MaxTokenBytes=%d = %v, want it passed through", atBound, len(atBound), bound, err)
+	}
+	// The decoder is the one that reports what is wrong with it.
+	if err := xml.Unmarshal([]byte(atBound), &struct{}{}); err == nil {
+		t.Error("the decoder accepted an unterminated tag; the division of labor is stale")
+	}
+
+	overBound := "<" + strings.Repeat("a", bound)
+	err := xmlx.Preflight([]byte(overBound), lim)
+	le, ok := errors.AsType[*xmlx.LimitError](err)
+	if !ok || le.Kind != xmlx.KindToken {
+		t.Fatalf("Preflight(%q), %d bytes at MaxTokenBytes=%d = %v, want KindToken", overBound, len(overBound), bound, err)
+	}
+	if le.Limit != bound {
+		t.Errorf("Limit = %d, want the configured %d", le.Limit, bound)
+	}
+}

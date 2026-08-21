@@ -556,3 +556,35 @@ func TestBudgetDecodeTextPropagatesSkipErrors(t *testing.T) {
 		t.Errorf("DecodeText = %v, want the decoder's own error", err)
 	}
 }
+
+// TestBudgetDecodeTextStopsAtTheChunkThatCrossesACap pins WHICH cap a split
+// value's rejection names. The value is refused at the chunk that would carry it
+// past a cap, so the error names the cap the accumulation crossed, and that is
+// not always the cap the assembled value would have crossed: here the first chunk
+// already outruns what the document can still afford, while the two chunks
+// together also outrun the per-field cap. A builder that assembled the whole
+// value first and checked afterwards would hold every byte of it in memory and
+// then blame the field cap for a document that ran out of allowance at its first
+// chunk, which is the diagnosis a caller sizes its next request from.
+func TestBudgetDecodeTextStopsAtTheChunkThatCrossesACap(t *testing.T) {
+	t.Parallel()
+	const maxField = 16
+	const maxTotal = 4
+	b := newBudget(t, maxField, maxTotal)
+
+	doc := `<a>` + strings.Repeat("x", 8) + `<![CDATA[` + strings.Repeat("y", maxField) + `]]></a>`
+	_, err := decodeFirstElementText(t, doc, b)
+	le, ok := errors.AsType[*xmlx.LimitError](err)
+	if !ok {
+		t.Fatalf("DecodeText = %v, want a *LimitError", err)
+	}
+	if le.Kind != xmlx.KindTotalText {
+		t.Errorf("Kind = %v, want KindTotalText: the first chunk already outran the document allowance", le.Kind)
+	}
+	if le.Limit != maxTotal {
+		t.Errorf("Limit = %d, want the configured maxTotalBytes %d", le.Limit, maxTotal)
+	}
+	if b.Total() != 0 {
+		t.Errorf("Total() = %d after the rejection, want 0: a refused value charges nothing", b.Total())
+	}
+}
