@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787316320434,
-  "repoUrl": "https://github.com/cplieger/xmlx",
+  "lastUpdate": 1787320247614,
+  "repoUrl": "https://github.com/cplieger/ci",
   "entries": {
     "Benchmark": [
       {
@@ -631,6 +631,217 @@ window.BENCHMARK_DATA = {
             "name": "BenchmarkPreflightRejection/too_many_attrs",
             "value": 230.2,
             "range": "± 4",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "cplieger",
+            "username": "cplieger",
+            "email": "917744+cplieger@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "Christopher Plieger",
+            "username": "cplieger",
+            "email": "917744+cplieger@users.noreply.github.com"
+          },
+          "id": "60782436f76f61656d95b748ea223378319092ef",
+          "message": "feat: open a benchmark regression tracker issue in each consumer\n\nweekly-bench measured benchmarks and reported a regression only into a job summary nobody opens. Its four sibling weekly workflows all surface findings as a per-repo tracker issue, and that is the difference between a tracker that is correct and one that is noticed. The action own alert comment cannot fill the gap: it resolves the repo to comment on from github.context.repo, which is cplieger/ci under this design and is not overridable, so it was turned off.\n\nUses the tracker shape (one permanent issue, body rewritten in place, sentinel regions, free-form notes preserved) rather than the per-finding shape. A fuzz finding is a discrete defect closed by committing the seed that proves the fix; a benchmark is a continuous series with no such artifact, it re-measures to a different value every week, and hash-keyed titles have already been shown to mint duplicate issues for one defect. Nothing here would ever auto-close, and closing would orphan the history because the sentinel query only matches open issues.\n\nThresholds are per metric, because the metrics are not alike. Wall clock keeps the loose 1.5x the workflow already configures, since runner amplitude is 10-20% and the target is an algorithmic regression. Allocation counts are counted rather than timed, so they get 1.05x, and crossing from zero to non-zero is called out on its own: an allocation-free path that starts allocating is the regression these libraries exist to prevent, and 1.5x would hide it completely.\n\nReads each consumer benchmarks branch instead of run artifacts, because unlike mutation reports the series is already stored durably. So the trend table is regenerated from the data every week rather than rolled forward from its own rendered markdown, which is how the stryker tracker once fused two table columns.",
+          "timestamp": "2026-08-21T13:45:35Z",
+          "url": "https://github.com/cplieger/ci/commit/60782436f76f61656d95b748ea223378319092ef"
+        },
+        "date": 1787320247049,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "BenchmarkBudgetCharge - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBudgetCharge - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBudgetCharge",
+            "value": 132,
+            "range": "± 1.1",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10",
+            "value": 4330,
+            "range": "± 74",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_100 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_100 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_100",
+            "value": 40688,
+            "range": "± 2447",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_1000 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_1000 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_1000",
+            "value": 404509.5,
+            "range": "± 11906",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10000 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10000 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10000",
+            "value": 4031652,
+            "range": "± 76250",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_text_run - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_text_run - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_text_run",
+            "value": 1054.5,
+            "range": "± 3",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_token - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_token - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_token",
+            "value": 246034.5,
+            "range": "± 1369",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_deep - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_deep - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_deep",
+            "value": 1585.5,
+            "range": "± 37",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_many_attrs - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_many_attrs - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_many_attrs",
+            "value": 214.8,
+            "range": "± 5.1",
             "unit": "ns/op",
             "extra": "10 samples, median"
           }
