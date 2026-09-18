@@ -1,8 +1,6 @@
 # xmlx
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/xmlx.svg)](https://pkg.go.dev/github.com/cplieger/xmlx)
-[![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/xmlx)](https://github.com/cplieger/xmlx/blob/main/go.mod)
-[![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/xmlx/badges/mutation.json)](https://github.com/cplieger/xmlx/issues?q=label%3Agremlins-tracker)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/xmlx.svg)](https://pkg.go.dev/github.com/cplieger/xmlx) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/xmlx)](https://github.com/cplieger/xmlx/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/xmlx/badges/mutation.json)](https://github.com/cplieger/xmlx/issues?q=label%3Agremlins-tracker)
 
 > Bound the work an untrusted XML document can cost, before and during an encoding/xml decode
 
