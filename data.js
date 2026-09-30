@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1790731057649,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/xmlx",
   "entries": {
     "Benchmark": [
       {
@@ -2336,10 +2336,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "48d1c682390d6a54c634f3df4594be7c938087f9",
-          "message": "chore(deps): update cplieger/ci digest to 1cc06fd (#659)",
-          "timestamp": "2026-09-24T22:02:23Z",
-          "url": "https://github.com/cplieger/ci/commit/48d1c682390d6a54c634f3df4594be7c938087f9"
+          "id": "a50e847c007033b278d4c9ffa84e7b5306d6407d",
+          "message": "chore(sync): synced file(s) with cplieger/ci (#158)\n\nCo-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-25T07:30:05Z",
+          "url": "https://github.com/cplieger/xmlx/commit/a50e847c007033b278d4c9ffa84e7b5306d6407d"
         },
         "date": 1790731057389,
         "tool": "customSmallerIsBetter",
