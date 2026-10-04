@@ -2,18 +2,20 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/xmlx.svg)](https://pkg.go.dev/github.com/cplieger/xmlx) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/xmlx)](https://github.com/cplieger/xmlx/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/xmlx/badges/mutation.json)](https://github.com/cplieger/xmlx/issues?q=label%3Agremlins-tracker)
 
-> Bound the work an untrusted XML document can cost, before and during an encoding/xml decode
+xmlx caps the memory and work an untrusted XML document can cost your Go program, before and during an `encoding/xml` decode.
 
-A standalone, stdlib-only Go library for programs that parse XML they did not write: a syndication feed, a third-party API response, an upstream service's reply.
+A byte cap on the response body does not bound the decode, because `encoding/xml` builds each token before your code can check it. xmlx adds those bounds and keeps your decoder. It uses only the standard library, needs Go 1.27 or later, is a stable v1 module under semantic versioning and is licensed under Apache-2.0.
 
-A byte cap on the response body is not a bound on decoding. `encoding/xml` materializes each token before any caller-side check can run, so a wire-capped body still forces allocations far past its own size:
+## Why use it
 
-- **One token can be as large as the body.** A single text node, attribute value, or start tag inside an 8 MB response is an 8 MB allocation before your struct field sees it, and the decoder's internal buffer never shrinks, so the largest token is a high-water mark for the whole decode.
-- **Element count amplifies.** Millions of three-byte elements fit in a few megabytes of wire and expand into a decoded object graph many times larger.
-- **Nesting grows the decoder's element stack.** The tokenizer pushes one heap-allocated entry per open element. `Unmarshal` does carry a fixed internal ceiling on its own recursion (10000 open elements, 5000 on wasm; introduced for CVE-2022-30633 and rebuilt for CVE-2026-56859, which closed a `DecodeElement` bypass), but the decoder samples it only where its schema recursion goes, and every child your schema does not model goes through `Decoder.Skip`, which is iterative and has no depth bound. Measured on go1.27.0: a document 349,525 elements deep decodes clean under a schema that models only the root.
-- **Concurrency multiplies all three.** Each in-flight request holds its own copy of the worst case.
+xmlx is built for Go code that decodes XML it did not write, such as an RSS or Atom feed or a third-party API reply.
 
-`xmlx` closes that gap with two primitives, one per place the cost is paid.
+- `Preflight` scans the raw bytes once, with no allocation, and refuses an oversized text run or tag, too many attributes, elements or nesting levels, and any XML directive such as a DOCTYPE.
+- A `Budget` caps each decoded value and the document's total decoded text while the value is still being read.
+- Every rejection wraps one sentinel, `ErrLimit`, and names the bound. A `Preflight` rejection also gives the byte offset. No rejection quotes the document.
+- A bound of zero or less is a configuration error, so no setting silently means unbounded.
+
+Consider [mattermost/xml-roundtrip-validator](https://github.com/mattermost/xml-roundtrip-validator) if your security depends on the document's shape, such as XML signature validation or SAML. It rejects input that does not survive an `encoding/xml` round trip, and it pairs with `Preflight`.
 
 ## Install
 
@@ -23,11 +25,11 @@ go get github.com/cplieger/xmlx@latest
 
 ## Usage
 
-`Preflight` is a lexical gate over the raw bytes, run before the decoder sees them. One sequential pass, no allocation, no copies:
+Run `Preflight` on the body before the decoder sees it:
 
 ```go
 if err := xmlx.Preflight(body, xmlx.DefaultLimits()); err != nil {
-	return err // *xmlx.LimitError, naming the bound and the byte offset
+	return err // a *xmlx.LimitError naming the bound and the byte offset
 }
 
 var doc feed
@@ -36,7 +38,7 @@ if err := xml.Unmarshal(body, &doc); err != nil {
 }
 ```
 
-`Budget` is the decode-time accounting a schema decoder charges each retained value against, applied before the value is stored. Thread one `Budget` through the document's decoders, here as the `item`'s `budget` field:
+With plain `xml.Unmarshal`, `Preflight` is the whole gate. A `Budget` works where you read tokens yourself, in a hand-written decoder or an `UnmarshalXML` method. Create one `Budget` per document and read each text field through it. `DecodeText` replaces `d.DecodeElement(&s, &start)` and refuses the value as soon as it grows past either cap:
 
 ```go
 budget, err := xmlx.NewBudget(4<<10, 4<<20) // per value, per document
@@ -44,92 +46,80 @@ if err != nil {
 	return err
 }
 
-func (it *item) UnmarshalXML(d *xml.Decoder, _ xml.StartElement) error {
-	for {
-		tok, err := d.Token()
-		if err != nil {
-			return err
-		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			switch t.Name.Local {
-			case "title":
-				it.Title, err = it.budget.DecodeText(d) // bounded as it accumulates
-			case "guid":
-				it.GUID, err = it.budget.DecodeText(d)
-			default:
-				err = d.Skip() // unknown child, never materialized
-			}
-			if err != nil {
-				return err
-			}
-		case xml.EndElement:
-			return nil
-		}
+d := xml.NewDecoder(bytes.NewReader(body))
+var title, guid string
+for {
+	tok, err := d.Token()
+	if err == io.EOF {
+		break
+	}
+	if err != nil {
+		return err
+	}
+	start, ok := tok.(xml.StartElement)
+	if !ok {
+		continue
+	}
+	switch start.Name.Local {
+	case "title":
+		title, err = budget.DecodeText(d)
+	case "guid":
+		guid, err = budget.DecodeText(d)
+	}
+	if err != nil {
+		return err
 	}
 }
+fmt.Println(title, guid, budget.Total())
 ```
 
-For a value `encoding/xml` has already handed you whole, such as an attribute off a `StartElement.Attr`, charge it before storing it:
+For a value the decoder has already handed you whole, such as an attribute value, call `budget.Charge(a.Value)` before you store it. In custom `UnmarshalXML` methods, give every element's decoder the same `*Budget`, and use `d.Skip()` for children you do not model. A value from `DecodeText` is already charged, so charge each value once. After any error from `DecodeText`, abandon the document. [How xmlx bounds a document](docs/design.md#how-decodetext-differs-from-decodeelement) has the detail.
 
-```go
-for _, a := range start.Attr {
-	if a.Name.Local == "url" {
-		if err := budget.Charge(a.Value); err != nil {
-			return err
-		}
-		enc.URL = a.Value
-	}
-}
-```
+To add the gate to a working integration, log the `Preflight` error and decode anyway until your bounds are proven, so a mis-sized bound shows up in your logs instead of breaking the feed.
 
-Retrofitting a live integration? Run the gate in observe-only mode first, so a mis-sized bound shows up in your logs instead of breaking a working feed:
-
-```go
-if err := xmlx.Preflight(body, lim); err != nil {
-	slog.Warn("xml document outside the preflight bounds", "error", err)
-	// fall through and decode anyway until the numbers are proven
-}
-```
+The package examples on pkg.go.dev show the gate, a rejection, a refused directive, the `Budget` loop and a value split across CDATA sections, and `go test` keeps them true.
 
 ## API
 
-- `Preflight(body []byte, lim Limits) error`: one allocation-free scan of the raw document. Rejects an overlong raw text or CDATA run, an overlong markup token, a start tag with too many XML attributes, too many elements, nesting past the depth bound, and any XML directive. `body` is neither modified nor retained.
-- `Limits` + `DefaultLimits()`: the lexical bounds. `MaxTextRunBytes`, `MaxTokenBytes`, `MaxTagAttrs`, `MaxDepth`, `MaxElements`.
-- `NewBudget(maxFieldBytes, maxTotalBytes int) (*Budget, error)` + `DefaultBudget()`: decode-time text accounting for one document, with `Total()`, `Remaining()`, `MaxFieldBytes()`, `MaxTotalBytes()`.
-- `Budget.DecodeText(d *xml.Decoder) (string, error)`: replaces `d.DecodeElement(&s, &start)` for a text field. Accumulates under the per-value cap and the document's remaining allowance, stopping at the token that would cross either. Nested markup is skipped whole; comments and processing instructions are ignored; on success the end tag is consumed. Any error means the document is over. The swap is byte-identical to `DecodeElement` for every value inside `encoding/xml`'s acceptance set, with one measured exception at the decoder's own depth ceiling (below).
-- `Budget.Charge(s string) error`: account one already-decoded value against both caps before storing it. Charge each value exactly once; a value returned by `DecodeText` is already charged.
-- `LimitError` + `Kind` + `ErrLimit`: every rejection names its bound and, for `Preflight`, the byte offset. Match the class with `errors.Is(err, xmlx.ErrLimit)`; read the bound with `errors.AsType[*xmlx.LimitError](err)` for the `Kind`, `Limit` and `Offset`.
-- `ConfigError` + `ErrInvalidLimits`: a non-positive bound is a caller mistake, reported separately from a document rejection.
+- `Preflight` is the raw-byte gate, and `Limits` with `DefaultLimits` holds its five bounds.
+- `NewBudget` and `DefaultBudget` create the decode-time text accounting for one document, with `DecodeText`, `Charge`, `Total`, `Remaining`, `MaxFieldBytes` and `MaxTotalBytes`.
+- `LimitError`, `Kind` and `ErrLimit` describe a rejection. Match the class with `errors.Is(err, xmlx.ErrLimit)` and read `Kind`, `Limit` and `Offset` with `errors.AsType[*xmlx.LimitError](err)`.
+- `ConfigError` and `ErrInvalidLimits` report a bound set to zero or less. That is a setup mistake, and it never wraps `ErrLimit`.
 
-## Design notes
-
-- **Two quantities, two bounds.** Raw bytes and decoded text are not the same measurement, and neither substitutes for the other. Entity references expand (`&quot;` is six raw bytes for one decoded), CDATA seams split one value across many tokens, and repeated elements overwrite one field while costing many decodes. `Limits` bounds what arrives; `Budget` bounds what is kept. Size the raw text bound _looser_ than the decoded value cap: 6 to 1 is the floor set by the widest predefined entity, and the defaults leave more.
-- **Bound the peak, not the net.** `MaxDepth` caps the greatest number of simultaneously open elements, which is what the decoder's stack holds, and popped entries are recycled through a free list so live cost really does track the peak. A self-closing element counts: the decoder pushes `<e/>` and pops it on the synthesized end tag, so `<a><b/></a>` reaches depth 2. Tracking only the net change would admit a document one level past your bound through a self-closing leaf.
-- **The decoder's own ceiling bounds a different question, so keep `MaxDepth` under it.** `encoding/xml` guards its unmarshal recursion at 10000 open elements (5000 on wasm), but it samples that count only on each entry into the recursion, never as the document's peak, so it says nothing about the part your schema does not model. Two consequences, both measured on go1.27.0. Under a schema that models only the root, a 349,525-deep document decodes clean and `Decoder.Skip` walks it unbounded, which is what `MaxDepth` is for. Under a schema nested as deeply as the document, the region of `MaxDepth` above 10000 is unreachable: at `MaxDepth` 10001 a 10001-deep document passes `Preflight` and `xml.Unmarshal` then refuses it with an unexported, unwrapped `errors.New("exceeded max depth")` that no `errors.Is` can classify. Set `MaxDepth` at or below 10000 in that case and `xmlx` reports the rejection instead, as `KindDepth` wrapping `ErrLimit`.
-- **Two measurement bases, named.** `MaxTextRunBytes` measures character _data_ (a raw run, a CDATA section's content), because that is what the decoder hands back as a `CharData` token. `MaxTokenBytes` measures a markup _token_ whole, delimiters included, so the same configured number means the same thing for a tag, a comment and a processing instruction.
-- **No silent defaults.** Every bound is explicit, and a non-positive one is a configuration mistake (`ErrInvalidLimits`), never read as "unbounded". A bounds library whose zero value bounds nothing is the failure it exists to prevent.
-- **Preflight bounds materialization; Budget bounds retention.** Only the raw-byte gate can stop the decoder from building an oversized token in the first place. `Budget` sees values the decoder has already produced, and stops them before they are concatenated and kept. That is why the two are complements rather than alternatives.
-- **Rejections mutate nothing.** A refused value leaves the budget exactly as it was, so a caller that treats one field as skippable is not silently drained.
-- **Errors carry a bound and an offset, never document bytes.** An excerpt of the offending input would be an unbounded, unsanitized string on its way to a log line: the amplification this library exists to stop, reintroduced through its own diagnostics. A byte offset is one bounded integer with no attacker-chosen content, and it is what turns "text run longer than 65536" into something you can find in a saved payload.
-- **Judgment-free about schemas.** How many `<item>` elements a document may carry is your contract, and it is one comparison at your decode site. The vocabulary-free total is `MaxElements`, which protects a plain `xml.Unmarshal` consumer that has no custom decode site to put such a rule in.
+The full reference is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/xmlx).
 
 ## Sizing the bounds
 
-`DefaultLimits` and `DefaultBudget` are sized for a small structured document: short fields, a handful of attributes per element, shallow nesting, thousands of elements rather than millions. They are a starting point.
+The defaults suit a small structured document, such as a feed or an API reply. They are a starting point.
 
-A catalogue-scale consumer, such as one parsing a multi-megabyte metadata dump, will exceed `MaxElements` and `Budget`'s document cap on its first real payload. That is the bound working, but it is worth discovering deliberately: set `MaxElements` and `maxTotalBytes` from that document's real ceiling. If the body arrives compressed, remember the preflight runs on the _inflated_ bytes, so the transport cap is not the bound that matters.
+| Bound | Default |
+| --- | --- |
+| `MaxTextRunBytes` | 64 KiB |
+| `MaxTokenBytes` | 128 KiB |
+| `MaxTagAttrs` | 16 |
+| `MaxDepth` | 64 |
+| `MaxElements` | 100,000 |
+| `Budget` per value | 4 KiB |
+| `Budget` per document | 4 MiB |
 
-## Unsupported by Design
+Set `MaxTextRunBytes` to at least six times the `Budget` per-value cap. An entity such as `&quot;` is six raw bytes that decode to one, so a smaller raw bound refuses values the `Budget` would keep. When your schema nests as deeply as the document, keep `MaxDepth` at 10000 or below, or 5000 on wasm. A catalogue-scale document will exceed `MaxElements` and the document cap, so set both from its real ceiling. For a compressed body, run `Preflight` on the inflated bytes. [How xmlx bounds a document](docs/design.md) explains each bound.
 
-- **XML directives.** `Preflight` refuses every `<!` form that is not a comment or a CDATA section: `<!DOCTYPE`, `<!ENTITY`, `<!ATTLIST`, `<!NOTATION`. `encoding/xml` tokenizes a directive by tracking nested `<`/`>` pairs, with quoting and nested comments, accumulating until a `>` at depth zero. A scan that merely stopped at the first unquoted `>` would report a short token where the decoder retains one the size of the whole body: a bound that reads as protection and is not. The objection is not that reproducing that tokenizer is laborious, it is that a silent divergence in a copied tokenizer is unfalsifiable at the call site while a refusal is falsifiable immediately. Rejecting the class by default is also the ecosystem norm for untrusted XML. Legacy RSS 0.91 did require a DOCTYPE, so the class is not extinct; a document that carries one cannot use `Preflight` and should be decoded under a byte cap and a `Budget` instead.
-- **XXE and entity expansion.** Not this library's concern, because `encoding/xml` does not resolve external entities and does not expand a DTD's internal entities. The directive rejection closes that surface as a side effect.
-- **Round-trip stability.** A different hardening axis. Go's XML parser uniquely accepts leading and trailing garbage around the document element, which was the mechanism behind a real authentication bypass (CVE-2020-16250). If your security depends on the document's _shape_ rather than its _cost_, pair `Preflight` with a round-trip validator such as [mattermost/xml-roundtrip-validator](https://github.com/mattermost/xml-roundtrip-validator); the two sit alongside each other and neither replaces the other.
-- **Schema validation, namespace policy, character-encoding conversion, well-formedness.** All `encoding/xml`'s. `Preflight` reads surface structure only, enough to know where one token ends and the next begins. The converse does not hold: malformed input can still trip a bound, so a rejection means the document was outside the contract, not that it was oversized.
-- **Streaming.** `Preflight` takes the whole body, because the gate's value is refusing a document before decoding it, and the caller already holds the bytes from a byte-capped read.
-- **Per-name cardinality.** "At most N `<item>` elements" needs your vocabulary and reads better with a name from it. `MaxElements` covers the vocabulary-free total.
-- **Recursion depth inside `DecodeText`.** `Budget.DecodeText` is iterative (`Token` plus `Skip`), so unlike `DecodeElement` it does not enter `encoding/xml`'s unmarshal recursion and does not inherit that recursion's depth ceiling. Measured on go1.27.0 by entering an element at a known open depth: the two return the same value through 10000 open elements (5000 on wasm), and one element deeper `DecodeElement` refuses while `DecodeText` still returns the value. `DecodeText` is therefore the looser of the two above that depth. That is the intended split rather than a gap. A `Budget` bounds bytes retained and never document shape, `DecodeText` carries no recursion for a ceiling to protect, and nesting is `Preflight`'s bound. A caller that wants the ceiling enforced sets `MaxDepth` at or below it, which also turns an unclassifiable stdlib error into `KindDepth` wrapping `ErrLimit`.
-- **Non-default decoder configuration.** The bounds model `Strict` enabled, no `AutoClose`, no caller-supplied `Entity` map, no `CharsetReader`. With `Strict` disabled a bare attribute name becomes an attribute the lexical count cannot see; an `Entity` map can expand a short reference after the raw bound has passed. Either keeps the token, depth and element bounds and makes the attribute and text bounds advisory.
+## Unsupported by design
+
+- XML directives. `Preflight` refuses every `<!DOCTYPE`, `<!ENTITY`, `<!ATTLIST` and `<!NOTATION`. Decode a document that needs one under a byte cap and a `Budget` instead.
+- XXE and DTD-defined entity expansion. `encoding/xml` does not resolve external entities or expand entities declared in a DTD.
+- Round-trip stability, which a round-trip validator covers.
+- Schema validation, namespace policy, character-encoding conversion and well-formedness, which stay with `encoding/xml`.
+- Streaming from an `io.Reader`. `Preflight` takes the whole body, so read it under a byte cap first.
+- Per-name limits such as "at most N `<item>` elements", which belong at your decode site.
+- Decoder settings other than the defaults. If you turn `Strict` off or set an `Entity` map, the token, depth and element bounds still hold. The attribute and text bounds can then miss input, so treat them as a guide.
+
+[What xmlx leaves out](docs/non-goals.md) gives the reason for each.
+
+## Documentation
+
+- [How xmlx bounds a document](docs/design.md) is for choosing bound values and reading a rejection.
+- [What xmlx leaves out](docs/non-goals.md) is for deciding whether a case is in scope.
 
 ## Contributing
 
