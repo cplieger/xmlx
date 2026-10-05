@@ -123,7 +123,7 @@ Set `MaxTextRunBytes` to at least six times the `Budget` per-value cap. An entit
 
 ## Contributing
 
-See [CONTRIBUTING.md](https://github.com/cplieger/.github/blob/main/CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 
