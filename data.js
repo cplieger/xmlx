@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790731057649,
-  "repoUrl": "https://github.com/cplieger/xmlx",
+  "lastUpdate": 1791336484093,
+  "repoUrl": "https://github.com/cplieger/ci",
   "entries": {
     "Benchmark": [
       {
@@ -2530,6 +2530,217 @@ window.BENCHMARK_DATA = {
             "name": "BenchmarkPreflightRejection/too_many_attrs",
             "value": 216.6,
             "range": "± 3.75",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Christopher Plieger",
+            "username": "cplieger",
+            "email": "917744+cplieger@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "e9fbabb1dd7e2a15de9212889c454856c6b43e0f",
+          "message": "ci: scale gremlins timeouts by workers, pick integration by cost (#705)\n\nci: scale gremlins timeouts by workers, pick integration by cost\n\ngremlins gives each mutant coverage-pass time x a coefficient (default 3), but the coverage pass runs alone on every CPU while each of N workers gets about 1/N of them, so a CPU-bound suite timed out surviving mutants and scored them out of efficacy (wiregen read 100% with 12 mutants alive). The coefficient is now 3 x the workers passed to gremlins.\n\nEach module now runs --integration --coverpkg ./... when the measured suite time x the dry-run mutant count / workers is under a quarter of the run job time cap, which lives once as a fanout output; otherwise, or when any input cannot be measured, it stays per-package. The tracker row records the mode, marks the week a repo switches, and compares trend and the regression label only against weeks of the same mode. The gremlins tracker goldens are regenerated on purpose for the new Mode column and a corrected efficacy legend (TIMED OUT counts in neither side).",
+          "timestamp": "2026-10-06T21:29:40Z",
+          "url": "https://github.com/cplieger/ci/commit/e9fbabb1dd7e2a15de9212889c454856c6b43e0f"
+        },
+        "date": 1791336483913,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "BenchmarkBudgetCharge - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBudgetCharge - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBudgetCharge",
+            "value": 132.15,
+            "range": "± 0.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10",
+            "value": 4368.5,
+            "range": "± 172",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_100 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_100 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_100",
+            "value": 41133,
+            "range": "± 271.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_1000 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_1000 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_1000",
+            "value": 409641.5,
+            "range": "± 2401.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10000 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10000 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflight/elements_10000",
+            "value": 4089907,
+            "range": "± 16382.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_text_run - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_text_run - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_text_run",
+            "value": 1053,
+            "range": "± 5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_token - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_token - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/oversized_token",
+            "value": 246243,
+            "range": "± 3181.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_deep - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_deep - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_deep",
+            "value": 1524.5,
+            "range": "± 6.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_many_attrs - B/op",
+            "value": 24,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_many_attrs - allocs/op",
+            "value": 1,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkPreflightRejection/too_many_attrs",
+            "value": 214.6,
+            "range": "± 0.65",
             "unit": "ns/op",
             "extra": "10 samples, median"
           }
