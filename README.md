@@ -1,5 +1,8 @@
 # xmlx
 
+> Moved to [`github.com/cplieger/go/xmlx`](https://github.com/cplieger/go/tree/dev/xmlx).
+> **Archived 2026-11-07. This repository is read-only. The published Go module stays available.**
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/xmlx.svg)](https://pkg.go.dev/github.com/cplieger/xmlx) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/xmlx)](https://github.com/cplieger/xmlx/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/xmlx/badges/mutation.json)](https://github.com/cplieger/xmlx/issues?q=label%3Agremlins-tracker)
 
 xmlx caps the memory and work an untrusted XML document can cost your Go program, before and during an `encoding/xml` decode.
